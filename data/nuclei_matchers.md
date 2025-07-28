@@ -1,0 +1,272 @@
+# Matchers
+
+Review details on matchers for Nuclei
+
+Matchers allow different type of flexible comparisons on protocol responses. They are what makes nuclei so powerful, checks are very simple to write and multiple checks can be added as per need for very effective scanning.
+
+### **Types**
+
+Multiple matchers can be specified in a request. There are basically 7 types of matchers:
+
+| **Matcher Type** | **Part Matched** |
+| --- | --- |
+| status | Integer Comparisons of Part |
+| size | Content Length of Part |
+| word | Part for a protocol |
+| regex | Part for a protocol |
+| binary | Part for a protocol |
+| dsl | Part for a protocol |
+| xpath | Part for a protocol |
+
+To match status codes for responses, you can use the following syntax.
+
+```yaml
+matchers:
+  # Match the status codes
+  - type: status
+    # Some status codes we want to match
+    status:
+      - 200
+      - 302
+```
+
+To match binary for hexadecimal responses, you can use the following syntax.
+
+```yaml
+matchers:
+  - type: binary
+    binary:
+      - "504B0304" # zip archive
+      - "526172211A070100" # RAR archive version 5.0
+      - "FD377A585A0000" # xz tar.xz archive
+    condition: or
+    part: body
+```
+
+Matchers also support hex encoded data which will be decoded and matched.
+
+```yaml
+matchers:
+  - type: word
+    encoding: hex
+    words:
+      - "50494e47"
+    part: body
+```
+
+**Word** and **Regex** matchers can be further configured depending on the needs of the users.
+
+**XPath** matchers use XPath queries to match XML and HTML responses. If the XPath query returns any results, it’s considered a match.
+
+```yaml
+matchers:
+  - type: xpath
+    part: body
+    xpath:
+      - "/html/head/title[contains(text(), 'Example Domain')]"
+```
+
+Complex matchers of type **dsl** allows building more elaborate expressions with helper functions. These function allow access to Protocol Response which contains variety of data based on each protocol. See protocol specific documentation to learn about different returned results.
+
+```yaml
+matchers:
+  - type: dsl
+    dsl:
+      - "len(body)<1024 && status_code==200" # Body length less than 1024 and 200 status code
+      - "contains(toupper(body), md5(cookie))" # Check if the MD5 sum of cookies is contained in the uppercase body
+```
+
+Every part of a Protocol response can be matched with DSL matcher. Some examples -
+
+| **Response Part** | **Description** | **Example** |
+| --- | --- | --- |
+| content_length | Content-Length Header | content_length >= 1024 |
+| status_code | Response Status Code | status_code==200 |
+| all_headers | Unique string containing all headers | len(all_headers) |
+| body | Body as string | len(body) |
+| header_name | Lowercase header name with **`-`** converted to **`_`** | len(user_agent) |
+| raw | Headers + Response | len(raw) |
+
+### **Conditions**
+
+Multiple words and regexes can be specified in a single matcher and can be configured with different conditions like **AND** and **OR**. When no condition is specified, **OR** is used as the default.
+
+1. **AND** - Using AND conditions allows matching of all the words from the list of words for the matcher. Only then will the request be marked as successful when all the words have been matched.
+2. **OR** - Using OR conditions allows matching of a single word from the list of matcher. The request will be marked as successful when even one of the word is matched for the matcher.
+
+### **Matched Parts**
+
+Multiple parts of the response can also be matched for the request, default matched part is **`body`** if not defined.
+
+Example matchers for HTTP response body using the AND condition:
+
+```yaml
+matchers:
+  # Match the body word
+  - type: word
+   # Some words we want to match
+   words:
+     - "[core]"
+     - "[config]"
+   # Both words must be found in the response body
+   condition: and
+   #  We want to match request body (default)
+   part: body
+```
+
+Similarly, matchers can be written to match anything that you want to find in the response body allowing unlimited creativity and extensibility.
+
+### **Negative Matchers**
+
+All types of matchers also support negative conditions, mostly useful when you look for a match with an exclusions. This can be used by adding **`negative: true`** in the **matchers** block.
+
+Here is an example syntax using **`negative`** condition, this will return all the URLs not having **`PHPSESSID`** in the response header.
+
+```yaml
+matchers:
+  - type: word
+    words:
+      - "PHPSESSID"
+    part: header
+    negative: true
+```
+
+### **Multiple Matchers**
+
+Multiple matchers can be used in a single template to fingerprint multiple conditions with a single request.
+
+Here is an example of syntax for multiple matchers.
+
+```yaml
+matchers:
+  - type: word
+    name: php
+    words:
+      - "X-Powered-By: PHP"
+      - "PHPSESSID"
+    part: header
+  - type: word
+    name: node
+    words:
+      - "Server: NodeJS"
+      - "X-Powered-By: nodejs"
+    condition: or
+    part: header
+  - type: word
+    name: python
+    words:
+      - "Python/2."
+      - "Python/3."
+    condition: or
+    part: header
+```
+
+### **Matchers Condition**
+
+While using multiple matchers the default condition is to follow OR operation in between all the matchers, AND operation can be used to make sure return the result if all matchers returns true.
+
+```yaml
+matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "X-Powered-By: PHP"
+          - "PHPSESSID"
+        condition: or
+        part: header
+
+      - type: word
+        words:
+          - "PHP"
+        part: body
+```
+
+### **Internal Matchers**
+
+When writing multi-protocol or **`flow`** based templates, there might be a case where we need to validate/match first request then proceed to next request and a good example of this is [**`CVE-2023-6553`**](https://github.com/projectdiscovery/nuclei-templates/blob/c5be73e328ebd9a0c122ea0324f60bbdd7eb940d/http/cves/2023/CVE-2023-6553.yaml#L21)
+
+In this template, we are first checking if target is actual using **`Backup Migration`** plugin using matchers and if true then proceed to next request with help of **`flow`**
+
+But this will print two results, one for each request match since we are using the first request matchers as a pre-condition to proceed to next request we can mark it as internal using **`internal: true`** in the matchers block.
+
+```yaml
+id: CVE-2023-6553
+
+info:
+  name: Worpress Backup Migration <= 1.3.7 - Unauthenticated Remote Code Execution
+  author: FLX
+  severity: critical
+
+flow: http(1) && http(2)
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/wp-content/plugins/backup-backup/readme.txt"
+
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code == 200'
+          - 'contains(body, "Backup Migration")'
+        condition: and
+        internal: true  # <- updated logic (this will skip printing this event/result)
+
+  - method: POST
+    path:
+      - "{{BaseURL}}/wp-content/plugins/backup-backup/includes/backup-heart.php"
+    headers:
+      Content-Dir: "{{rand_text_alpha(10)}}"
+
+    matchers:
+      - type: dsl
+        dsl:
+          - 'len(body) == 0'
+          - 'status_code == 200'
+          - '!contains(body, "Incorrect parameters")'
+        condition: and
+```
+
+### **Global Matchers**
+
+Global matchers are essentially **`matchers`** that apply globally across all HTTP responses received from running other templates. This makes them super useful for things like passive detection, fingerprinting, spotting errors, WAF detection, identifying unusual behaviors, or even catching secrets and information leaks. By setting **`global-matchers`** to **true**, you’re enabling the template to automatically match events triggered by other templates without having to configure them individually.
+
+- Global matchers only work with [**HTTP-protocol-based**](https://docs.projectdiscovery.io/templates/protocols/http) templates.
+- When global matchers are enabled, no requests defined in the template will be sent.
+- This feature is not limited to **`matchers`**; you can also define **`extractors`** in a global matchers template.
+
+Let’s look at a quick example of how this works:
+
+```yaml
+# http-template-with-global-matchers.yaml
+http:
+  - global-matchers: true
+    matchers-condition: or
+    matchers:
+      - type: regex
+        name: asymmetric_private_key
+        regex:
+          - '-----BEGIN ((EC|PGP|DSA|RSA|OPENSSH) )?PRIVATE KEY( BLOCK)?-----'
+        part: body
+
+      - type: regex
+        name: slack_webhook
+        regex:
+          - >-
+            https://hooks.slack.com/services/T[a-zA-Z0-9_]{8,10}/B[a-zA-Z0-9_]{8,12}/[a-zA-Z0-9_]{23,24}
+        part: body
+```
+
+In this example, we’re using a template that has **`global-matchers`** set to **true**. It looks for specific patterns, like an asymmetric private key or a Slack webhook, across all HTTP requests. Now, when you run this template along with others, the global matcher will automatically check for those patterns in all HTTP responses. You don’t have to set up individual matchers in every single template for it to work.
+
+To run it, use a command like this:
+
+```bash
+> nuclei -egm -u http://example.com -t http-template-with-global-matchers.yaml -t http-template-1.yaml -t http-template-2.yaml -silent
+[http-template-with-global-matchers:asymmetric_private_key] http://example.com/request-from-http-template-1
+[http-template-with-global-matchers:slack_webhook] http://example.com/request-from-http-template-2
+```
+
+Global matchers are NOT applied by default. You need to explicitly enable them using the **`-enable-global-matchers`**/**`-egm`** flag or programmatically via [**`nuclei.EnableGlobalMatchersTemplates`**](https://pkg.go.dev/github.com/projectdiscovery/nuclei/v3/lib#EnableGlobalMatchersTemplates) if you’re working with the Nuclei SDK.
+
+In this case, the global matchers are looking for an asymmetric private key and a Slack webhook. As you can see in the output, it found a match in requests from the other templates, even though the matching logic was only defined once in the global matchers template. This makes it really efficient for detecting patterns across multiple requests without duplicating code in every single template.
